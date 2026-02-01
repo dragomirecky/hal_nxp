@@ -123,6 +123,12 @@ static void sb3_DelayUs(uint32_t us)
 {
     uint32_t instNum;
 
+    if (us > 2000) {
+        uint32_t ms = (us - 1001) / 1000;
+        OSA_TimeDelay(ms);
+        us -= ms * 1000;
+    }
+
     instNum = ((SystemCoreClock + 999999UL) / 1000000UL) * us;
     sb3_Delay((instNum + 2U) / 3U);
 }
