@@ -136,18 +136,6 @@ int wlan_set_rg_power_cfg(t_u16 region_code)
     int rv              = WM_SUCCESS;
 
     board_type = wifi_get_board_type();
-    (void)PRINTF("board_type: %d, board_type mapping: \r\n", board_type);
-
-#if defined(RW610)
-    (void)PRINTF("0----QFN\r\n");
-    (void)PRINTF("1----CSP\r\n");
-    (void)PRINTF("2----BGA\r\n");
-#endif /* RW610 */
-
-#if defined(IW610)
-    (void)PRINTF("0----CSP\r\n");
-    (void)PRINTF("1----QFN\r\n");
-#endif /* IW610 */
 
     if(board_type >= PKG_TYPE_MAX)
      {
