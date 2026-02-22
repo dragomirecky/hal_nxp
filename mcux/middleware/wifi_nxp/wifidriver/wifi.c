@@ -3134,6 +3134,9 @@ static inline t_u8 wifi_is_max_tx_cnt(t_u8 pkt_cnt)
 #endif
 }
 
+#define WIFI_TX_BATCH_MAX   16  /* packets per lock-hold, must be multiple of IMU_PAYLOAD_SIZE(8) */
+#define WIFI_TX_BATCH_YIELD 1   /* return code: batch limit reached, more pkts remain */
+
 /* dequeue and xmit one packet */
 static mlan_status wifi_xmit_pkts(mlan_private *priv, t_u8 ac, raListTbl *ralist)
 {
@@ -3179,7 +3182,8 @@ static mlan_status wifi_xmit_pkts(mlan_private *priv, t_u8 ac, raListTbl *ralist
  *  return MLAN_STATUS_SUCESS to continue looping ralists,
  *  return MLAN_STATUS_RESOURCE to break looping ralists
  */
-static mlan_status wifi_xmit_ralist_pkts(mlan_private *priv, t_u8 ac, raListTbl *ralist, t_u8 *pkt_cnt)
+static mlan_status wifi_xmit_ralist_pkts(mlan_private *priv, t_u8 ac, raListTbl *ralist, t_u8 *pkt_cnt,
+                                          t_u16 *batch_cnt)
 {
     mlan_status ret;
 
@@ -3190,6 +3194,14 @@ static mlan_status wifi_xmit_ralist_pkts(mlan_private *priv, t_u8 ac, raListTbl 
     {
         if ((wifi_txbuf_available() == MFALSE) || (WIFI_DATA_RUNNING != wifi_tx_status))
             break;
+
+        /* Batch limit: flush pending and signal caller to yield */
+        if (*batch_cnt >= WIFI_TX_BATCH_MAX)
+        {
+            wlan_flush_wmm_pkt(*pkt_cnt);
+            *pkt_cnt = 0;
+            return MLAN_STATUS_PENDING;
+        }
 
 #if CONFIG_AMSDU_IN_AMPDU
         if (wlan_is_amsdu_allowed(priv, priv->bss_index, ralist->total_pkts, ac))
@@ -3206,6 +3218,7 @@ static mlan_status wifi_xmit_ralist_pkts(mlan_private *priv, t_u8 ac, raListTbl 
          * multiple packets aggregated as one amsdu packet, are counted as one imu packet
          */
         (*pkt_cnt)++;
+        (*batch_cnt)++;
         if (wifi_is_max_tx_cnt(*pkt_cnt) == MTRUE)
         {
             wlan_flush_wmm_pkt(*pkt_cnt);
@@ -3226,6 +3239,7 @@ static int wifi_xmit_wmm_ac_pkts_enh(mlan_private *priv)
     int ac;
     mlan_status ret;
     t_u8 pkt_cnt       = 0;
+    t_u16 batch_cnt    = 0;
     raListTbl *ralist  = MNULL;
     tid_tbl_t *tid_ptr = MNULL;
 
@@ -3250,7 +3264,12 @@ static int wifi_xmit_wmm_ac_pkts_enh(mlan_private *priv)
 
         while (ralist && ralist != (raListTbl *)&tid_ptr->ra_list)
         {
-            ret = wifi_xmit_ralist_pkts(priv, ac, ralist, &pkt_cnt);
+            ret = wifi_xmit_ralist_pkts(priv, ac, ralist, &pkt_cnt, &batch_cnt);
+            if (ret == MLAN_STATUS_PENDING)
+            {
+                mlan_adap->callbacks.moal_semaphore_put(mlan_adap->pmoal_handle, &tid_ptr->ra_list.plock);
+                return WIFI_TX_BATCH_YIELD;
+            }
             if (ret != MLAN_STATUS_SUCCESS)
             {
                 mlan_adap->callbacks.moal_semaphore_put(mlan_adap->pmoal_handle, &tid_ptr->ra_list.plock);
@@ -3465,6 +3484,9 @@ static void wifi_drv_tx_task(osa_task_param_t arg)
             /* Send packet when the outbuf pool is not empty and not in block tx status*/
             if ((wifi_wmm_get_packet_cnt() > 0) && (WIFI_DATA_RUNNING == wifi_tx_status))
             {
+                int tx_ret = WM_SUCCESS;
+                int sleep_detected = 0;
+
                 for (i = 0; i < MLAN_MAX_BSS_NUM; i++)
                 {
                     pmpriv = pmadapter->priv[i];
@@ -3473,31 +3495,49 @@ static void wifi_drv_tx_task(osa_task_param_t arg)
                         continue;
                     }
 
-                    wifi_tx_card_awake_lock();
-#ifndef RW610
-                    wifi_sdio_lock();
-#else
-                    wifi_imu_lock();
-#endif
-                    if (pmadapter->ps_state == PS_STATE_SLEEP_CFM || pmadapter->ps_state == PS_STATE_SLEEP)
+                    do
                     {
+                        /* Re-check state — may change during yield */
+                        if (!pmpriv->media_connected || pmpriv->tx_pause)
+                            break;
+
+                        wifi_tx_card_awake_lock();
+#ifndef RW610
+                        wifi_sdio_lock();
+#else
+                        wifi_imu_lock();
+#endif
+                        sleep_detected = 0;
+                        if (pmadapter->ps_state == PS_STATE_SLEEP_CFM ||
+                            pmadapter->ps_state == PS_STATE_SLEEP)
+                        {
+#ifndef RW610
+                            wifi_sdio_unlock();
+#else
+                            wifi_imu_unlock();
+#endif
+                            wifi_tx_card_awake_unlock();
+                            send_wifi_driver_tx_data_event(i);
+                            sleep_detected = 1;
+                            break;
+                        }
+
+                        tx_ret = wifi_xmit_wmm_ac_pkts_enh(pmpriv);
 #ifndef RW610
                         wifi_sdio_unlock();
 #else
                         wifi_imu_unlock();
 #endif
                         wifi_tx_card_awake_unlock();
-                        send_wifi_driver_tx_data_event(i);
-                        break;
-                    }
 
-                    wifi_xmit_wmm_ac_pkts_enh(pmpriv);
-#ifndef RW610
-                    wifi_sdio_unlock();
-#else
-                    wifi_imu_unlock();
-#endif
-                    wifi_tx_card_awake_unlock();
+                        if (tx_ret == WIFI_TX_BATCH_YIELD)
+                        {
+                            OSA_TimeDelay(1);
+                        }
+                    } while (tx_ret == WIFI_TX_BATCH_YIELD);
+
+                    if (sleep_detected)
+                        break;
                 }
             }
 #if CONFIG_WMM_UAPSD

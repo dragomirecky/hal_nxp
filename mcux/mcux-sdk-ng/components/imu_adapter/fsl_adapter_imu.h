@@ -278,7 +278,7 @@ hal_imumc_status_t HAL_ImumcExitLowpower(hal_imumc_handle_t handle);
 
 #ifndef IMU_TASK_PRIORITY
 #if defined(__ZEPHYR__)
-#define IMU_TASK_PRIORITY (3U)
+#define IMU_TASK_PRIORITY (10U)
 #elif defined(CPU2)
 #define IMU_TASK_PRIORITY (2U)
 #else
