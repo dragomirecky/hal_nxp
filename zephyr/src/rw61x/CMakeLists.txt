@@ -24,6 +24,12 @@ if(CONFIG_NXP_MONOLITHIC_WIFI OR CONFIG_NXP_MONOLITHIC_NBU)
 
 		list(APPEND signed_binary_blobs_list ${hal_blobs_dir}/${signed_binary_blob_name})
 		zephyr_library_sources(${CMAKE_CURRENT_LIST_DIR}/rw61x_cpu2.c)
+
+		# Tell the NXP connectivity framework that BLE firmware is
+		# linked into the application image (monolithic) so it uses
+		# the fw_cpu2_ble / fw_cpu2_combo symbols instead of trying
+		# to load from a flash address.
+		zephyr_compile_definitions(gPlatformMonolithicApp_d=1)
 	endif()
 
 	list(LENGTH signed_binary_blobs_list count)
