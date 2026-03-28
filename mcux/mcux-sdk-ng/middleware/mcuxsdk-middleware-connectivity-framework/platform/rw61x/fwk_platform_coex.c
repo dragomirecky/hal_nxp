@@ -110,6 +110,11 @@ int PLATFORM_InitControllers(uint8_t controllersMask)
     return ret;
 }
 
+void PLATFORM_SetRunningControllers(uint8_t controllersMask)
+{
+    runningControllers |= controllersMask;
+}
+
 int PLATFORM_TerminateControllers(uint8_t controllersMask)
 {
     uint8_t protocols = controllersMask & connAll_c;

@@ -53,6 +53,17 @@ int PLATFORM_TerminateControllers(uint8_t controllersMask);
  */
 uint8_t PLATFORM_GetRunningControllers(void);
 
+/*!
+ * \brief Mark controllers as already running.
+ *
+ * When the WiFi driver loads combo firmware that includes BLE,
+ * the BLE controller is running but PLATFORM_InitControllers
+ * doesn't know.  Call this to prevent a redundant firmware load.
+ *
+ * \param[in] controllersMask controllers to mark as running
+ */
+void PLATFORM_SetRunningControllers(uint8_t controllersMask);
+
 #ifdef __cplusplus
 }
 #endif
